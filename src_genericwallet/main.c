@@ -48,6 +48,8 @@ unsigned int io_seproxyhal_touch_tx_ok(const bagl_element_t *e);
 unsigned int io_seproxyhal_touch_tx_cancel(const bagl_element_t *e);
 unsigned int io_seproxyhal_touch_address_ok(const bagl_element_t *e);
 unsigned int io_seproxyhal_touch_address_cancel(const bagl_element_t *e);
+unsigned int io_seproxyhal_touch_signMessage_ok(const bagl_element_t *e);
+unsigned int io_seproxyhal_touch_signMessage_cancel(const bagl_element_t *e);
 void ui_idle(void);
 
 uint32_t set_result_get_publicKey(void);
@@ -58,6 +60,7 @@ uint32_t set_result_get_publicKey(void);
 #define INS_GET_PUBLIC_KEY 0x02
 #define INS_SIGN 0x04
 #define INS_GET_APP_CONFIGURATION 0x06
+#define INS_SIGN_PERSONAL_MESSAGE 0x08
 #define P1_CONFIRM 0x01
 #define P1_NON_CONFIRM 0x00
 #define P2_NO_CHAINCODE 0x00
@@ -95,13 +98,22 @@ typedef struct transactionContext_t {
     uint8_t hash[32];
 } transactionContext_t;
 
+typedef struct messageSigningContext_t {
+    uint8_t pathLength;
+    uint32_t bip32Path[MAX_BIP32_PATH];
+    uint8_t hash[32];
+    uint32_t remainingLength;
+} messageSigningContext_t;
+
 union {
     publicKeyContext_t publicKeyContext;
     transactionContext_t transactionContext;
+    messageSigningContext_t messageSigningContext;
 } tmpCtx;
 txContext_t txContext;
 txContent_t txContent;
 cx_sha3_t sha3;
+cx_sha256_t sha2;
 tokenContext_t tokenContext;
 volatile uint8_t dataAllowed;
 volatile uint8_t fidoTransport;
@@ -135,6 +147,21 @@ WIDE internalStorage_t N_storage_real;
 #define N_storage (*(WIDE internalStorage_t *)PIC(&N_storage_real))
 
 static const char const CONTRACT_ADDRESS[] = "New contract";
+
+static const char const SIGN_MAGIC[] = "\x19"
+                                       "Ethereum Signed Message:\n";
+
+const unsigned char hex_digits[] = {'0', '1', '2', '3', '4', '5', '6', '7',
+                                    '8', '9', 'A', 'B', 'C', 'D', 'E', 'F'};
+
+void array_hexstr(char *strbuf, const void *bin, unsigned int len) {
+    while (len--) {
+        *strbuf++ = hex_digits[((*((char *)bin)) >> 4) & 0xF];
+        *strbuf++ = hex_digits[(*((char *)bin)) & 0xF];
+        bin = (const void *)((unsigned int)bin + 1);
+    }
+    *strbuf = 0; // EOS
+}
 
 #ifdef HAVE_U2F
 
@@ -2038,6 +2065,106 @@ unsigned int ui_approval_prepro(const bagl_element_t *element) {
 
 unsigned int ui_approval_nanos_button(unsigned int button_mask,
                                       unsigned int button_mask_counter);
+
+const bagl_element_t ui_approval_signMessage_nanos[] = {
+    // type                               userid    x    y   w    h  str rad
+    // fill      fg        bg      fid iid  txt   touchparams...       ]
+    {{BAGL_RECTANGLE, 0x00, 0, 0, 128, 32, 0, 0, BAGL_FILL, 0x000000, 0xFFFFFF,
+      0, 0},
+     NULL,
+     0,
+     0,
+     0,
+     NULL,
+     NULL,
+     NULL},
+
+    {{BAGL_ICON, 0x00, 3, 12, 7, 7, 0, 0, 0, 0xFFFFFF, 0x000000, 0,
+      BAGL_GLYPH_ICON_CROSS},
+     NULL,
+     0,
+     0,
+     0,
+     NULL,
+     NULL,
+     NULL},
+    {{BAGL_ICON, 0x00, 117, 13, 8, 6, 0, 0, 0, 0xFFFFFF, 0x000000, 0,
+      BAGL_GLYPH_ICON_CHECK},
+     NULL,
+     0,
+     0,
+     0,
+     NULL,
+     NULL,
+     NULL},
+
+    {{BAGL_ICON, 0x01, 28, 9, 14, 14, 0, 0, 0, 0xFFFFFF, 0x000000, 0,
+      BAGL_GLYPH_ICON_TRANSACTION_BADGE},
+     NULL,
+     0,
+     0,
+     0,
+     NULL,
+     NULL,
+     NULL},
+    {{BAGL_LABELINE, 0x01, 50, 12, 128, 32, 0, 0, 0, 0xFFFFFF, 0x000000,
+      BAGL_FONT_OPEN_SANS_EXTRABOLD_11px, 0},
+     "Sign the",
+     0,
+     0,
+     0,
+     NULL,
+     NULL,
+     NULL},
+    {{BAGL_LABELINE, 0x01, 49, 26, 128, 32, 0, 0, 0, 0xFFFFFF, 0x000000,
+      BAGL_FONT_OPEN_SANS_EXTRABOLD_11px, 0},
+     "message",
+     0,
+     0,
+     0,
+     NULL,
+     NULL,
+     NULL},
+
+    {{BAGL_LABELINE, 0x02, 0, 12, 128, 32, 0, 0, 0, 0xFFFFFF, 0x000000,
+      BAGL_FONT_OPEN_SANS_REGULAR_11px | BAGL_FONT_ALIGNMENT_CENTER, 0},
+     "Message hash",
+     0,
+     0,
+     0,
+     NULL,
+     NULL,
+     NULL},
+    {{BAGL_LABELINE, 0x02, 0, 26, 128, 32, 0, 0, 0, 0xFFFFFF, 0x000000,
+      BAGL_FONT_OPEN_SANS_EXTRABOLD_11px | BAGL_FONT_ALIGNMENT_CENTER, 0},
+     fullAddress,
+     0,
+     0,
+     0,
+     NULL,
+     NULL,
+     NULL},
+
+};
+unsigned int
+ui_approval_signMessage_nanos_button(unsigned int button_mask,
+                                     unsigned int button_mask_counter);
+
+unsigned int ui_approval_signMessage_prepro(const bagl_element_t *element) {
+    if (element->component.userid > 0) {
+        switch (element->component.userid) {
+        case 1:
+            UX_CALLBACK_SET_INTERVAL(2000);
+            break;
+        case 2:
+            UX_CALLBACK_SET_INTERVAL(3000);
+            break;
+        }
+        return (ux_step == element->component.userid - 1);
+    }
+    return 1;
+}
+
 #endif // #if TARGET_ID == 0x31100002
 
 void ui_idle(void) {
@@ -2317,6 +2444,69 @@ unsigned int io_seproxyhal_touch_tx_cancel(const bagl_element_t *e) {
     return 0; // do not redraw the widget
 }
 
+unsigned int io_seproxyhal_touch_signMessage_ok(const bagl_element_t *e) {
+    uint8_t privateKeyData[32];
+    uint8_t signature[100];
+    uint8_t signatureLength;
+    cx_ecfp_private_key_t privateKey;
+    uint32_t tx = 0;
+    uint8_t rLength, sLength, rOffset, sOffset;
+    os_perso_derive_node_bip32(
+        CX_CURVE_256K1, tmpCtx.messageSigningContext.bip32Path,
+        tmpCtx.messageSigningContext.pathLength, privateKeyData, NULL);
+    cx_ecfp_init_private_key(CX_CURVE_256K1, privateKeyData, 32, &privateKey);
+    os_memset(privateKeyData, 0, sizeof(privateKeyData));
+    signatureLength =
+        cx_ecdsa_sign(&privateKey, CX_RND_RFC6979 | CX_LAST, CX_SHA256,
+                      tmpCtx.messageSigningContext.hash,
+                      sizeof(tmpCtx.messageSigningContext.hash), signature);
+    os_memset(&privateKey, 0, sizeof(privateKey));
+    G_io_apdu_buffer[0] = 27 + (signature[0] & 0x01);
+    rLength = signature[3];
+    sLength = signature[4 + rLength + 1];
+    rOffset = (rLength == 33 ? 1 : 0);
+    sOffset = (sLength == 33 ? 1 : 0);
+    os_memmove(G_io_apdu_buffer + 1, signature + 4 + rOffset, 32);
+    os_memmove(G_io_apdu_buffer + 1 + 32, signature + 4 + rLength + 2 + sOffset,
+               32);
+    tx = 65;
+    G_io_apdu_buffer[tx++] = 0x90;
+    G_io_apdu_buffer[tx++] = 0x00;
+#ifdef HAVE_U2F
+    if (fidoActivated) {
+        u2f_proxy_response((u2f_service_t *)&u2fService, tx);
+    } else {
+        // Send back the response, do not restart the event loop
+        io_exchange(CHANNEL_APDU | IO_RETURN_AFTER_TX, tx);
+    }
+#else  // HAVE_U2F
+    // Send back the response, do not restart the event loop
+    io_exchange(CHANNEL_APDU | IO_RETURN_AFTER_TX, tx);
+#endif // HAVE_U2F
+    // Display back the original UX
+    ui_idle();
+    return 0; // do not redraw the widget
+}
+
+unsigned int io_seproxyhal_touch_signMessage_cancel(const bagl_element_t *e) {
+    G_io_apdu_buffer[0] = 0x69;
+    G_io_apdu_buffer[1] = 0x85;
+#ifdef HAVE_U2F
+    if (fidoActivated) {
+        u2f_proxy_response((u2f_service_t *)&u2fService, 2);
+    } else {
+        // Send back the response, do not restart the event loop
+        io_exchange(CHANNEL_APDU | IO_RETURN_AFTER_TX, 2);
+    }
+#else  // HAVE_U2F
+    // Send back the response, do not restart the event loop
+    io_exchange(CHANNEL_APDU | IO_RETURN_AFTER_TX, 2);
+#endif // HAVE_U2F
+    // Display back the original UX
+    ui_idle();
+    return 0; // do not redraw the widget
+}
+
 #if TARGET_ID == 0x31100002
 unsigned int ui_approval_nanos_button(unsigned int button_mask,
                                       unsigned int button_mask_counter) {
@@ -2332,6 +2522,23 @@ unsigned int ui_approval_nanos_button(unsigned int button_mask,
     }
     return 0;
 }
+
+unsigned int
+ui_approval_signMessage_nanos_button(unsigned int button_mask,
+                                     unsigned int button_mask_counter) {
+    switch (button_mask) {
+    case BUTTON_EVT_RELEASED | BUTTON_LEFT:
+        io_seproxyhal_touch_signMessage_cancel(NULL);
+        break;
+
+    case BUTTON_EVT_RELEASED | BUTTON_RIGHT: {
+        io_seproxyhal_touch_signMessage_ok(NULL);
+        break;
+    }
+    }
+    return 0;
+}
+
 #endif // #if TARGET_ID == 0x31100002
 
 unsigned short io_exchange_al(unsigned char channel, unsigned short tx_len) {
@@ -2658,6 +2865,97 @@ void handleGetAppConfiguration(uint8_t p1, uint8_t p2, uint8_t *workBuffer,
     THROW(0x9000);
 }
 
+void handleSignPersonalMessage(uint8_t p1, uint8_t p2, uint8_t *workBuffer,
+                               uint16_t dataLength,
+                               volatile unsigned int *flags,
+                               volatile unsigned int *tx) {
+    UNUSED(tx);
+    uint8_t hashMessage[32];
+    if (p1 == P1_FIRST) {
+        char tmp[11];
+        uint32_t index;
+        uint32_t base = 10;
+        uint8_t pos = 0;
+        uint32_t i;
+        tmpCtx.messageSigningContext.pathLength = workBuffer[0];
+        if ((tmpCtx.messageSigningContext.pathLength < 0x01) ||
+            (tmpCtx.messageSigningContext.pathLength > MAX_BIP32_PATH)) {
+            PRINTF("Invalid path\n");
+            THROW(0x6a80);
+        }
+        workBuffer++;
+        dataLength--;
+        for (i = 0; i < tmpCtx.messageSigningContext.pathLength; i++) {
+            tmpCtx.messageSigningContext.bip32Path[i] =
+                (workBuffer[0] << 24) | (workBuffer[1] << 16) |
+                (workBuffer[2] << 8) | (workBuffer[3]);
+            workBuffer += 4;
+            dataLength -= 4;
+        }
+        tmpCtx.messageSigningContext.remainingLength =
+            (workBuffer[0] << 24) | (workBuffer[1] << 16) |
+            (workBuffer[2] << 8) | (workBuffer[3]);
+        workBuffer += 4;
+        dataLength -= 4;
+        // Initialize message header + length
+        cx_keccak_init(&sha3, 256);
+        cx_hash((cx_hash_t *)&sha3, 0, SIGN_MAGIC, sizeof(SIGN_MAGIC) - 1,
+                NULL);
+        for (index = 1; (((index * base) <=
+                          tmpCtx.messageSigningContext.remainingLength) &&
+                         (((index * base) / base) == index));
+             index *= base)
+            ;
+        for (; index; index /= base) {
+            tmp[pos++] =
+                '0' +
+                ((tmpCtx.messageSigningContext.remainingLength / index) % base);
+        }
+        tmp[pos] = '\0';
+        cx_hash((cx_hash_t *)&sha3, 0, tmp, pos, NULL);
+        cx_sha256_init(&sha2);
+
+    } else if (p1 != P1_MORE) {
+        THROW(0x6B00);
+    }
+    if (p2 != 0) {
+        THROW(0x6B00);
+    }
+    if (dataLength > tmpCtx.messageSigningContext.remainingLength) {
+        THROW(0x6A80);
+    }
+    cx_hash((cx_hash_t *)&sha3, 0, workBuffer, dataLength, NULL);
+    cx_hash((cx_hash_t *)&sha2, 0, workBuffer, dataLength, NULL);
+    tmpCtx.messageSigningContext.remainingLength -= dataLength;
+    if (tmpCtx.messageSigningContext.remainingLength == 0) {
+        cx_hash((cx_hash_t *)&sha3, CX_LAST, workBuffer, 0,
+                tmpCtx.messageSigningContext.hash);
+        cx_hash((cx_hash_t *)&sha2, CX_LAST, workBuffer, 0, hashMessage);
+
+#define HASH_LENGTH 4
+        array_hexstr(fullAddress, hashMessage, HASH_LENGTH / 2);
+        fullAddress[HASH_LENGTH / 2 * 2] = '.';
+        fullAddress[HASH_LENGTH / 2 * 2 + 1] = '.';
+        fullAddress[HASH_LENGTH / 2 * 2 + 2] = '.';
+        array_hexstr(fullAddress + HASH_LENGTH / 2 * 2 + 3,
+                     hashMessage + 32 - HASH_LENGTH / 2, HASH_LENGTH / 2);
+
+#if TARGET_ID == 0x31000002
+#error "TODO BLUE UX"
+#elif TARGET_ID == 0x31100002
+        ux_step = 0;
+        ux_step_count = 2;
+        UX_DISPLAY(ui_approval_signMessage_nanos,
+                   ui_approval_signMessage_prepro);
+#endif // #if TARGET_ID
+
+        *flags |= IO_ASYNCH_REPLY;
+
+    } else {
+        THROW(0x9000);
+    }
+}
+
 void handleApdu(volatile unsigned int *flags, volatile unsigned int *tx) {
     unsigned short sw = 0;
 
@@ -2684,6 +2982,13 @@ void handleApdu(volatile unsigned int *flags, volatile unsigned int *tx) {
 
             case INS_GET_APP_CONFIGURATION:
                 handleGetAppConfiguration(
+                    G_io_apdu_buffer[OFFSET_P1], G_io_apdu_buffer[OFFSET_P2],
+                    G_io_apdu_buffer + OFFSET_CDATA,
+                    G_io_apdu_buffer[OFFSET_LC], flags, tx);
+                break;
+
+            case INS_SIGN_PERSONAL_MESSAGE:
+                handleSignPersonalMessage(
                     G_io_apdu_buffer[OFFSET_P1], G_io_apdu_buffer[OFFSET_P2],
                     G_io_apdu_buffer + OFFSET_CDATA,
                     G_io_apdu_buffer[OFFSET_LC], flags, tx);
