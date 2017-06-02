@@ -21,8 +21,6 @@
 
 struct txContext_t;
 
-typedef bool (*ustreamProcess_t)(struct txContext_t *context);
-
 typedef enum rlpTxField_e {
     TX_RLP_NONE = 0,
     TX_RLP_CONTENT,
@@ -40,9 +38,19 @@ typedef enum rlpTxField_e {
 
 typedef enum parserStatus_e {
     USTREAM_PROCESSING,
+    USTREAM_SUSPENDED,
     USTREAM_FINISHED,
     USTREAM_FAULT
 } parserStatus_e;
+
+typedef enum customStatus_e {
+    CUSTOM_NOT_HANDLED,
+    CUSTOM_HANDLED,
+    CUSTOM_SUSPENDED,
+    CUSTOM_FAULT
+} customStatus_e;
+
+typedef customStatus_e (*ustreamProcess_t)(struct txContext_t *context);
 
 typedef struct txInt256_t {
     uint8_t value[32];
@@ -81,5 +89,6 @@ void initTx(txContext_t *context, cx_sha3_t *sha3, txContent_t *content,
             ustreamProcess_t customProcessor, void *extra);
 parserStatus_e processTx(txContext_t *context, uint8_t *buffer,
                          uint32_t length);
+parserStatus_e continueTx(txContext_t *context);
 void copyTxData(txContext_t *context, uint8_t *out, uint32_t length);
 uint8_t readTxByte(txContext_t *context);

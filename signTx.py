@@ -71,10 +71,23 @@ tx = Transaction(
 encodedTx = encode(tx, UnsignedTransaction)
 
 donglePath = parse_bip32_path(args.path)
-apdu = "e0040000".decode('hex') + chr(len(donglePath) + 1 + len(encodedTx)) + chr(len(donglePath) / 4) + donglePath + encodedTx
+data = chr(len(donglePath) / 4) + donglePath + encodedTx
 
 dongle = getDongle(True)
-result = dongle.exchange(bytes(apdu))
+
+offset = 0
+while offset != len(data):
+	if (offset + 255) > len(data):
+		blockSize = len(data) - offset
+	else:
+		blockSize = 255
+	if offset == 0:
+		p1 = "00"
+	else:
+		p1 = "80"
+	apdu = ("e004" + p1 + "00").decode('hex') + chr(blockSize) + data[offset : offset + blockSize]
+	result = dongle.exchange(bytes(apdu))
+	offset = offset + blockSize
 
 v = result[0]
 r = int(str(result[1:1 + 32]).encode('hex'), 16)

@@ -255,7 +255,7 @@ static void processV(txContext_t *context) {
 
 static parserStatus_e processTxInternal(txContext_t *context) {
     for (;;) {
-        bool processedCustom = false;
+        customStatus_e customStatus = CUSTOM_NOT_HANDLED;
         // EIP 155 style transasction
         if (context->currentField == TX_RLP_DONE) {
             return USTREAM_FINISHED;
@@ -317,9 +317,22 @@ static parserStatus_e processTxInternal(txContext_t *context) {
             context->processingField = true;
         }
         if (context->customProcessor != NULL) {
-            processedCustom = context->customProcessor(context);
+            customStatus = context->customProcessor(context);
+            switch(customStatus) {
+                case CUSTOM_NOT_HANDLED:
+                case CUSTOM_HANDLED:
+                    break;
+                case CUSTOM_FAULT:
+                    PRINTF("Custom processor aborted\n");
+                    return USTREAM_FAULT;
+                case CUSTOM_SUSPENDED:
+                    return USTREAM_SUSPENDED;
+                default:
+                    PRINTF("Unhandled custom processor status\n");
+                    return USTREAM_FAULT;                
+            }
         }
-        if (!processedCustom) {
+        if (customStatus == CUSTOM_NOT_HANDLED) {
             switch (context->currentField) {
             case TX_RLP_CONTENT:
                 processContent(context);
@@ -372,4 +385,20 @@ parserStatus_e processTx(txContext_t *context, uint8_t *buffer,
     }
     END_TRY;
     return result;
+}
+
+parserStatus_e continueTx(txContext_t *context) {
+    parserStatus_e result;
+    BEGIN_TRY {
+        TRY {
+            result = processTxInternal(context);
+        }
+        CATCH_OTHER(e) {
+            result = USTREAM_FAULT;
+        }
+        FINALLY {
+        }
+    }
+    END_TRY;
+    return result;    
 }
