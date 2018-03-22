@@ -21,16 +21,17 @@ from ledgerblue.comm import getDongle
 from ledgerblue.commException import CommException
 import argparse
 import struct
+import binascii
 
 def parse_bip32_path(path):
 	if len(path) == 0:
 		return ""
-	result = ""
+	result = b""
 	elements = path.split('/')
 	for pathElement in elements:
 		element = pathElement.split('\'')
 		if len(element) == 1:
-			result = result + struct.pack(">I", int(element[0]))			
+			result = result + struct.pack(">I", int(element[0]))
 		else:
 			result = result + struct.pack(">I", 0x80000000 | int(element[0]))
 	return result
@@ -43,12 +44,13 @@ if args.path == None:
 	args.path = "44'/60'/0'/0/0"
 
 donglePath = parse_bip32_path(args.path)
-apdu = "e0020100".decode('hex') + chr(len(donglePath) + 1) + chr(len(donglePath) / 4) + donglePath
+apdu = binascii.unhexlify("e0020100") + bytes(chr(len(donglePath) + 1), 'utf-8') + bytes(chr(int(len(donglePath) / 4)), 'utf-8') + donglePath
 
 dongle = getDongle(True)
 result = dongle.exchange(bytes(apdu))
 offset = 1 + result[0]
-address = result[offset + 1 : offset + 1 + result[offset]]
+address = result[offset + 1: offset + 1 + result[offset]]
 
-print "Public key " + str(result[1 : 1 + result[0]]).encode('hex')
-print "Address 0x" + str(address)
+print("Public key " + (result[1: 1 + result[0]]).hex())
+print("Address 0x" + binascii.unhexlify(address).hex())
+
